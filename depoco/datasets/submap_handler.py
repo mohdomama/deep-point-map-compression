@@ -179,12 +179,14 @@ class SubMapDataSet(Dataset):
             data_dirs, nr_submaps=self.nr_submaps, cols=cols, on_the_fly=on_the_fly,grid_size=grid_size)  # list of submaps
 
     def __getitem__(self, index):
+        index=0
         out_dict = {'idx': index}
         self.submaps[index].initialize()
         if self.cols <= 3:
             out_dict['points'] = self.submaps[index].getRandPoints(
                 self.nr_points, seed=index)
             out_dict['map'] = self.submaps[index].getPoints()
+            out_dict['normalizer'] = self.submaps[index].normalizer
             if self.init_ones:
                 out_dict['features'] = np.ones(
                     (out_dict['points'].shape[0], 1), dtype='float32')
@@ -195,6 +197,7 @@ class SubMapDataSet(Dataset):
             out_dict['points_attributes'] = points[:, 3:]
             map_ = self.submaps[index].getPoints()
             out_dict['map'] = map_[:, :3]
+            out_dict['normalizer'] = self.submaps[index].normalizer
             out_dict['map_attributes'] = map_[:, 3:]
             if self.init_ones:
                 out_dict['features'] = np.hstack(
@@ -262,6 +265,8 @@ class SubMap():
         points = self.getPoints()
         act_nr_pts = points.shape[0]
         subm_idx = np.arange(act_nr_pts)
+        # TODO: remove seed fix code
+        seed = 3
         np.random.seed(seed)
         np.random.shuffle(subm_idx)
         # print('shuffled idx',subm_idx)
