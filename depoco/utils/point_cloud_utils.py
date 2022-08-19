@@ -156,13 +156,22 @@ def saveCloud2Binary(cld, file, out_path=None):
 
 
 def loadCloudFromBinary(file, cols=3):
-    f = open(file, "rb")
-    binary_data = f.read()
-    f.close()
-    temp = np.frombuffer(
-        binary_data, dtype='float32', count=-1)
-    data = np.reshape(temp, (cols, int(temp.size/cols)))
-    return data.T
+    # TODO: Separate numpy loading and binary loading in two different folders, call accordingly
+    # f = open(file, "rb")
+    # binary_data = f.read()
+    # f.close()
+    # temp = np.frombuffer(
+    #     binary_data, dtype='float32', count=-1)
+    # data = np.reshape(temp, (cols, int(temp.size/cols)))
+    # return data.T
+    bin_pcd = np.fromfile(file, dtype=np.float32)
+    points = bin_pcd.reshape(-1, 4)[:, 0:3]
+    return points
+
+def loadCloudFromNP(file, cols=3):
+    bin_pcd = np.fromfile(file, dtype=np.float32)
+    points = bin_pcd.reshape(-1, 4)[:, 0:3]
+    return points
 
 
 def colorizeConv(in_pcl:np.ndarray, out_pcl:np.ndarray, kernel_radius, max_nr_neighbors,kernel_pos=None, kernel_points=None):

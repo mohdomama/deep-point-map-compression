@@ -10,6 +10,7 @@ from typing import Tuple, Union
 from torch.utils.data import Dataset, Sampler
 import torch
 import os
+from util.kitti_helper import load_kitti_eval_poses
 ########################################
 # Torch Data loader
 ########################################
@@ -170,6 +171,15 @@ class SubMapDataSet(Dataset):
                  feature_cols=[],
                  grid_size = 40):
         self.data_dirs = data_dirs
+        poses_path = self.data_dirs[0][:-9] + 'poses.txt'
+        self.poses = load_kitti_eval_poses(poses_path)
+        self.vel2cam = np.array([
+            [4.276802385584e-04, -9.999672484946e-01, -8.084491683471e-03, -1.198459927713e-02, ],
+            [-7.210626507497e-03,  8.081198471645e-03, -9.999413164504e-01, -5.403984729748e-02, ],
+            [9.999738645903e-01,  4.859485810390e-04, -7.206933692422e-03, -2.921968648686e-01,],
+            [0  ,                 0   ,                0       ,            1]
+        ])
+
         self.nr_submaps = nr_submaps
         self.nr_points = nr_points
         self.cols = cols
@@ -179,12 +189,15 @@ class SubMapDataSet(Dataset):
             data_dirs, nr_submaps=self.nr_submaps, cols=cols, on_the_fly=on_the_fly,grid_size=grid_size)  # list of submaps
 
     def __getitem__(self, index):
+        # return index, index+1
         out_dict = {'idx': index}
         self.submaps[index].initialize()
+        self.submaps[index+1].initialize()
         if self.cols <= 3:
             out_dict['points'] = self.submaps[index].getRandPoints(
                 self.nr_points, seed=index)
             out_dict['map'] = self.submaps[index].getPoints()
+            out_dict['normalizer'] = self.submaps[index].normalizer
             if self.init_ones:
                 out_dict['features'] = np.ones(
                     (out_dict['points'].shape[0], 1), dtype='float32')
@@ -193,20 +206,40 @@ class SubMapDataSet(Dataset):
                 self.nr_points, seed=index)
             out_dict['points'] = points[:, :3]
             out_dict['points_attributes'] = points[:, 3:]
-            map_ = self.submaps[index].getPoints()
+            map_= self.submaps[index].getPoints()
             out_dict['map'] = map_[:, :3]
+            out_dict['normalizer'] = self.submaps[index].normalizer
             out_dict['map_attributes'] = map_[:, 3:]
             if self.init_ones:
                 out_dict['features'] = np.hstack(
                     (np.ones((points.shape[0], 1), dtype='float32'), out_dict['points_attributes'][:, self.fc]))
             else:
                 out_dict['features'] = out_dict['points_attributes'][:, self.fc]
-        out_dict['features_original'] = out_dict['features']
-        out_dict['scale'] = self.submaps[index].getScale()
+            
+            points2 = self.submaps[index+1].getRandPoints(
+                self.nr_points, seed=index)
+            out_dict['points2'] = points2[:, :3]
+            out_dict['points_attributes2'] = points2[:, 3:]
+            map_2= self.submaps[index+1].getPoints()
+            out_dict['map2'] = map_2[:, :3]
+            out_dict['normalizer2'] = self.submaps[index+1].normalizer
+            out_dict['map_attributes2'] = map_2[:, 3:]
+            if self.init_ones:
+                out_dict['features2'] = np.hstack(
+                    (np.ones((points2.shape[0], 1), dtype='float32'), out_dict['points_attributes2'][:, self.fc]))
+            else:
+                out_dict['features2'] = out_dict['points_attributes2'][:, self.fc]
+        # out_dict['features_original'] = out_dict['features']
+        out_dict['scale1'] = self.submaps[index].getScale()
+        out_dict['scale2'] = self.submaps[index+1].getScale()
+
+        ## Calculate Poses
+        out_dict['pose'] = np.linalg.inv(self.vel2cam) @ np.linalg.inv(self.poses[index]) @ self.poses[index+1] @ self.vel2cam
+
         return out_dict
 
     def __len__(self):
-        return len(self.submaps)
+        return len(self.submaps)-1
 
 
 class SubMap():
@@ -262,6 +295,8 @@ class SubMap():
         points = self.getPoints()
         act_nr_pts = points.shape[0]
         subm_idx = np.arange(act_nr_pts)
+        # TODO: remove seed fix code
+        seed = 3
         np.random.seed(seed)
         np.random.shuffle(subm_idx)
         # print('shuffled idx',subm_idx)

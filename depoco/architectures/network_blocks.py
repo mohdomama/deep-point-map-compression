@@ -128,6 +128,8 @@ class GridSampleConv(nn.Module):
         # KP Conv
         conf_in_fdim = out_fdim if in_fdim > 1 else in_fdim
         self.subsampling_dist = config['subsampling_dist'] * config['subsampling_factor']
+
+        # TODO: Sampling has been removed. Move this to different class
         # self.kernel_radius = max(config['kernel_radius'], self.subsampling_dist/40 )
         self.kernel_radius = max(config['min_kernel_radius'],config['kernel_radius']*self.subsampling_dist)/40
         KP_extent = self.kernel_radius / \
@@ -166,7 +168,8 @@ class GridSampleConv(nn.Module):
     def forward(self, input_dict: dict) -> dict:
         source = input_dict['points']
         source_np = source.detach().cpu().numpy()
-        sample_idx = gridSampling(source,resolution_meter=self.subsampling_dist,map_size=self.map_size)
+        # sample_idx = gridSampling(source,resolution_meter=self.subsampling_dist,map_size=self.map_size)
+        sample_idx = list(range(source.shape[0]))
         # get neighbors
         self.octree.setInput(source_np)
         neighbors_index = self.octree.radiusSearchIndices(
