@@ -171,8 +171,15 @@ class SubMapDataSet(Dataset):
                  feature_cols=[],
                  grid_size = 40):
         self.data_dirs = data_dirs
-        poses_path = self.data_dirs[0][:-9] + 'poses.txt'
-        self.poses = load_kitti_eval_poses(poses_path)
+        
+        # Setting up poses
+        self.poses = []
+        self.marked_idxs = []
+        for dir in self.data_dirs:
+            poses_path = dir + 'poses.txt'
+            single_seq_poses = load_kitti_eval_poses(poses_path)
+            self.marked_idxs.append(len(self.poses) + len(single_seq_poses)-1)
+            self.poses += single_seq_poses
         self.vel2cam = np.array([
             [4.276802385584e-04, -9.999672484946e-01, -8.084491683471e-03, -1.198459927713e-02, ],
             [-7.210626507497e-03,  8.081198471645e-03, -9.999413164504e-01, -5.403984729748e-02, ],
@@ -190,6 +197,8 @@ class SubMapDataSet(Dataset):
 
     def __getitem__(self, index):
         # return index, index+1
+        if index in self.marked_idxs:
+            index = index-1    # Cannot take the last scene of each seqenece
         out_dict = {'idx': index}
         self.submaps[index].initialize()
         self.submaps[index+1].initialize()
@@ -307,7 +316,7 @@ class SubMap():
 def createSubmaps(folders, nr_submaps=0, cols=3, on_the_fly=False,grid_size=40):
     submap_files = []
     for folder in sorted(folders):
-        submap_files += sorted(glob.glob(folder+'*bin'))
+        submap_files += sorted(glob.glob(folder+'velodyne/*bin'))
     if int(nr_submaps) != 0:
         # print('taking n maps:',nr_submaps)
         n = min((len(submap_files), nr_submaps))
