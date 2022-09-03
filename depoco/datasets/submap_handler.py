@@ -1,4 +1,5 @@
 
+import random
 import numpy as np
 import depoco.utils.point_cloud_utils as pcu
 # import torch
@@ -11,6 +12,7 @@ from torch.utils.data import Dataset, Sampler
 import torch
 import os
 from util.kitti_helper import load_kitti_eval_poses
+from util.transforms import transform_numpy_pcd
 ########################################
 # Torch Data loader
 ########################################
@@ -34,7 +36,11 @@ class SubMapParser():
             fldid) for fldid in config["dataset"]["data_folders"]["test"]] if config["dataset"]["data_folders"]["test"] else []
         cols = 3+sum(config['grid']['feature_dim'])
         # Trainingset
-        self.train_dataset = SubMapDataSet(data_dirs=self.train_folders,
+        if config['dataset']['type'] == 'custom':
+            DatasetClass = SubMapDataSetCustom
+        elif config['dataset']['type'] == 'default':
+            DatasetClass = SubMapDataSet
+        self.train_dataset = DatasetClass(data_dirs=self.train_folders,
                                            nr_submaps=nr_submaps,
                                            nr_points=config['train']['max_nr_pts'], cols=cols, on_the_fly=True,
                                            grid_size=np.max(self.grid_size))
@@ -55,7 +61,7 @@ class SubMapParser():
         self.train_iter_ordered = iter(self.train_loader_ordered)
 
         # Validationset
-        self.valid_dataset = SubMapDataSet(data_dirs=self.valid_folders,
+        self.valid_dataset = DatasetClass(data_dirs=self.valid_folders,
                                            nr_submaps=0,
                                            nr_points=config['train']['max_nr_pts'],
                                            cols=cols, on_the_fly=True,
@@ -70,7 +76,7 @@ class SubMapParser():
         self.valid_iter = iter(self.valid_loader)
 
         # Testset
-        self.test_dataset = SubMapDataSet(data_dirs=self.test_folders,
+        self.test_dataset = DatasetClass(data_dirs=self.test_folders,
                                           nr_submaps=0,
                                           nr_points=config['train']['max_nr_pts'],
                                           cols=cols, on_the_fly=True,
@@ -160,6 +166,124 @@ class SubMapSampler(Sampler):
     def __len__(self):
         return self.nr_samples
 
+class SubMapDataSetCustom(Dataset):
+    def __init__(self, data_dirs,
+                 nr_submaps=0,
+                 nr_points=10000,
+                 cols=3,
+                 on_the_fly=True,
+                 init_ones=True,
+                 feature_cols=[],
+                 grid_size = 40):
+        self.data_dirs = data_dirs
+        
+        # Setting up poses
+        self.poses = []
+        self.marked_idxs = []
+        for dir in self.data_dirs:
+            poses_path = dir + 'poses.txt'
+            single_seq_poses = load_kitti_eval_poses(poses_path)
+            self.marked_idxs.append(len(self.poses) + len(single_seq_poses)-1)
+            self.poses += single_seq_poses
+        self.marked_idxs = np.array(self.marked_idxs)
+        self.vel2cam = np.array([
+            [4.276802385584e-04, -9.999672484946e-01, -8.084491683471e-03, -1.198459927713e-02, ],
+            [-7.210626507497e-03,  8.081198471645e-03, -9.999413164504e-01, -5.403984729748e-02, ],
+            [9.999738645903e-01,  4.859485810390e-04, -7.206933692422e-03, -2.921968648686e-01,],
+            [0  ,                 0   ,                0       ,            1]
+        ])
+
+        self.nr_submaps = nr_submaps
+        self.nr_points = nr_points
+        self.cols = cols
+        self.init_ones = init_ones
+        self.fc = feature_cols
+        self.submaps = createSubmaps(
+            data_dirs, nr_submaps=self.nr_submaps, cols=cols, on_the_fly=on_the_fly,grid_size=grid_size)  # list of submaps
+
+    def __getitem__(self, index):
+        # return index, index+1
+        print('Dataset Idx Pre: ', index)
+        if index.item() in self.marked_idxs or index.item() in  self.marked_idxs-1 or index.item() in self.marked_idxs-2 or index.item() in self.marked_idxs-3:
+            index = index-3    # Cannot take the last scene of each seqenece
+        out_dict = {'idx': index}
+        print('Dataset Idx Post: ', index)
+        print(self.marked_idxs)
+
+        k = random.choice([-1,1,2,3])
+        print('K random choice: ', k)
+        warm_start=False
+        if k==-1 and index not in self.marked_idxs+1 and index!=0:
+            k=1  # -1 was just an identifier for warm start
+            warm_start=True
+        print('Final K: ', k)
+
+        self.submaps[index].initialize()
+        self.submaps[index+k].initialize()
+        if self.cols <= 3:
+            out_dict['points'] = self.submaps[index].getRandPoints(
+                self.nr_points, seed=index)
+            out_dict['map'] = self.submaps[index].getPoints()
+            out_dict['normalizer'] = self.submaps[index].normalizer
+            if self.init_ones:
+                out_dict['features'] = np.ones(
+                    (out_dict['points'].shape[0], 1), dtype='float32')
+        else:
+            points = self.submaps[index].getRandPoints(
+                self.nr_points, seed=index)
+            out_dict['points'] = points[:, :3]
+            out_dict['points_attributes'] = points[:, 3:]
+            map_= self.submaps[index].getPoints()
+            out_dict['map'] = map_[:, :3]
+            out_dict['normalizer'] = self.submaps[index].normalizer
+            out_dict['map_attributes'] = map_[:, 3:]
+            if self.init_ones:
+                out_dict['features'] = np.hstack(
+                    (np.ones((points.shape[0], 1), dtype='float32'), out_dict['points_attributes'][:, self.fc]))
+            else:
+                out_dict['features'] = out_dict['points_attributes'][:, self.fc]
+            
+            points2 = self.submaps[index+k].getRandPoints(
+                self.nr_points, seed=index)
+            out_dict['points2'] = points2[:, :3]
+            out_dict['points_attributes2'] = points2[:, 3:]
+            map_2= self.submaps[index+k].getPoints()
+            out_dict['map2'] = map_2[:, :3]
+            out_dict['normalizer2'] = self.submaps[index+k].normalizer
+            out_dict['map_attributes2'] = map_2[:, 3:]
+            if self.init_ones:
+                out_dict['features2'] = np.hstack(
+                    (np.ones((points2.shape[0], 1), dtype='float32'), out_dict['points_attributes2'][:, self.fc]))
+            else:
+                out_dict['features2'] = out_dict['points_attributes2'][:, self.fc]
+        # out_dict['features_original'] = out_dict['features']
+        out_dict['scale1'] = self.submaps[index].getScale()
+        out_dict['scale2'] = self.submaps[index+k].getScale()
+
+        ## Calculate Poses
+        if not warm_start:
+            # This gives tf from v+k  to v
+            out_dict['pose'] = np.linalg.inv(self.vel2cam) @ np.linalg.inv(self.poses[index]) @ self.poses[index+k] @ self.vel2cam
+        else:
+            # TODO: Verify All This!
+            # This gives tf from v  to v-1
+            tf_prev =  np.linalg.inv(self.vel2cam) @ np.linalg.inv(self.poses[index-1]) @ self.poses[index] @ self.vel2cam
+            # Here k is 1 since we are in warm start mode, this gives tf from v+1 to v
+            tf = np.linalg.inv(self.vel2cam) @ np.linalg.inv(self.poses[index]) @ self.poses[index+k] @ self.vel2cam
+            points2 = out_dict['normalizer2'].recover(out_dict['points2'])
+            points2 = transform_numpy_pcd(points2, tf_prev)
+            points2 = points2.astype(np.float32)
+            out_dict['points2'] = out_dict['normalizer2'].normalize(points2)
+            out_dict['pose'] = np.linalg.inv(tf_prev) @ tf
+
+
+        return out_dict
+
+    def __len__(self):
+        return len(self.submaps)-1
+
+
+
 
 class SubMapDataSet(Dataset):
     def __init__(self, data_dirs,
@@ -197,11 +321,17 @@ class SubMapDataSet(Dataset):
 
     def __getitem__(self, index):
         # return index, index+1
+        print('Dataset Idx: ', index)
         if index in self.marked_idxs:
             index = index-1    # Cannot take the last scene of each seqenece
         out_dict = {'idx': index}
+
+        k = 1
+        # When skip frames allowed
+        # k = random.choice([1,2])
+
         self.submaps[index].initialize()
-        self.submaps[index+1].initialize()
+        self.submaps[index+k].initialize()
         if self.cols <= 3:
             out_dict['points'] = self.submaps[index].getRandPoints(
                 self.nr_points, seed=index)
@@ -225,13 +355,13 @@ class SubMapDataSet(Dataset):
             else:
                 out_dict['features'] = out_dict['points_attributes'][:, self.fc]
             
-            points2 = self.submaps[index+1].getRandPoints(
+            points2 = self.submaps[index+k].getRandPoints(
                 self.nr_points, seed=index)
             out_dict['points2'] = points2[:, :3]
             out_dict['points_attributes2'] = points2[:, 3:]
-            map_2= self.submaps[index+1].getPoints()
+            map_2= self.submaps[index+k].getPoints()
             out_dict['map2'] = map_2[:, :3]
-            out_dict['normalizer2'] = self.submaps[index+1].normalizer
+            out_dict['normalizer2'] = self.submaps[index+k].normalizer
             out_dict['map_attributes2'] = map_2[:, 3:]
             if self.init_ones:
                 out_dict['features2'] = np.hstack(
@@ -240,10 +370,10 @@ class SubMapDataSet(Dataset):
                 out_dict['features2'] = out_dict['points_attributes2'][:, self.fc]
         # out_dict['features_original'] = out_dict['features']
         out_dict['scale1'] = self.submaps[index].getScale()
-        out_dict['scale2'] = self.submaps[index+1].getScale()
+        out_dict['scale2'] = self.submaps[index+k].getScale()
 
         ## Calculate Poses
-        out_dict['pose'] = np.linalg.inv(self.vel2cam) @ np.linalg.inv(self.poses[index]) @ self.poses[index+1] @ self.vel2cam
+        out_dict['pose'] = np.linalg.inv(self.vel2cam) @ np.linalg.inv(self.poses[index]) @ self.poses[index+k] @ self.vel2cam
 
         return out_dict
 
@@ -306,8 +436,8 @@ class SubMap():
         subm_idx = np.arange(act_nr_pts)
         # TODO: remove seed fix code
         seed = 3
-        np.random.seed(seed)
-        np.random.shuffle(subm_idx)
+        # np.random.seed(seed)
+        # np.random.shuffle(subm_idx)
         # print('shuffled idx',subm_idx)
         subm_idx = subm_idx[0:min(act_nr_pts, nr_points)]
         return points[subm_idx, :]
