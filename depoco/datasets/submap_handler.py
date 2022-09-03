@@ -213,10 +213,13 @@ class SubMapDataSetCustom(Dataset):
         k = random.choice([-1,1,2,3])
         print('K random choice: ', k)
         warm_start=False
-        if k==-1 and index not in self.marked_idxs+1 and index!=0:
-            k=1  # -1 was just an identifier for warm start
+        if k==-1 and index.item() not in self.marked_idxs+1 and index!=0:
             warm_start=True
+        if k==-1:
+            k=1  # -1 was just an identifier for warm start
         print('Final K: ', k)
+        print('Warm: ', warm_start)
+
 
         self.submaps[index].initialize()
         self.submaps[index+k].initialize()
@@ -265,6 +268,7 @@ class SubMapDataSetCustom(Dataset):
             # This gives tf from v+k  to v
             out_dict['pose'] = np.linalg.inv(self.vel2cam) @ np.linalg.inv(self.poses[index]) @ self.poses[index+k] @ self.vel2cam
         else:
+            print('Setting Things for Warm Start!')
             # TODO: Verify All This!
             # This gives tf from v  to v-1
             tf_prev =  np.linalg.inv(self.vel2cam) @ np.linalg.inv(self.poses[index-1]) @ self.poses[index] @ self.vel2cam
