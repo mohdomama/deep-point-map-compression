@@ -67,7 +67,7 @@ class SubMapParser():
                                            cols=cols, on_the_fly=True,
                                            grid_size=np.max(self.grid_size))
         self.valid_sampler = SubMapSampler(nr_submaps=len(self.valid_dataset),
-                                           sampling_method='ordered')
+                                           sampling_method=config['train']['validation']['sampling_method'])
         self.valid_loader = torch.utils.data.DataLoader(dataset=self.valid_dataset,
                                                         batch_size=None,
                                                         sampler=self.valid_sampler,
