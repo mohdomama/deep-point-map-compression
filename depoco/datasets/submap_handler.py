@@ -326,7 +326,7 @@ class SubMapDataSet(Dataset):
     def __getitem__(self, index):
         # return index, index+1
         print('Dataset Idx: ', index)
-        if index in self.marked_idxs:
+        if index.item() in self.marked_idxs:
             index = index-1    # Cannot take the last scene of each seqenece
         out_dict = {'idx': index}
 
