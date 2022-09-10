@@ -1,5 +1,6 @@
 
 
+from time import time
 import torch.nn as nn
 import torch
 import numpy as np
@@ -142,6 +143,7 @@ class GridSampleConv(nn.Module):
         self.max_nr_neighbors = config['max_nr_neighbors']
         self.map_size = config['map_size']
         self.octree = octree_handler.Octree()
+        self.use_old_idx = config['use_old_idx']
 
         print('kernel radius',self.kernel_radius)
         # Post linear
@@ -171,11 +173,14 @@ class GridSampleConv(nn.Module):
         # sample_idx = gridSampling(source,resolution_meter=self.subsampling_dist,map_size=self.map_size)
         sample_idx = list(range(source.shape[0]))
         # get neighbors
-        self.octree.setInput(source_np)
-        neighbors_index = self.octree.radiusSearchIndices(
-            sample_idx, self.max_nr_neighbors, self.kernel_radius)
-        neighbors_index = torch.from_numpy(
-            neighbors_index).long().to(source.device)
+        if 'neighbors_index' in input_dict and self.use_old_idx:
+            neighbors_index = input_dict['neighbors_index']
+        else: 
+            self.octree.setInput(source_np)
+            neighbors_index = self.octree.radiusSearchIndices(
+                sample_idx, self.max_nr_neighbors, self.kernel_radius)
+            neighbors_index = torch.from_numpy(
+                neighbors_index).long().to(source.device)
 
         features = self.preactivation(input_dict['features'])
         features = self.kp_conv.forward(q_pts=input_dict['points'][sample_idx, :],
@@ -187,6 +192,7 @@ class GridSampleConv(nn.Module):
         input_dict['features'] = self.relu(
             self.shortcut(input_dict['features'][sample_idx, :]) + features)
         input_dict['points'] = input_dict['points'][sample_idx, :]
+        input_dict['neighbors_index'] = neighbors_index
         return input_dict
 
 # https://discuss.pytorch.org/t/apply-mask-softmax/14212/14
