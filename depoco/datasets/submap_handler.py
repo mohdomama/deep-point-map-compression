@@ -75,6 +75,13 @@ class SubMapParser():
                                                         )
         self.valid_iter = iter(self.valid_loader)
 
+        # Ordered Validset
+        self.valid_loader_ordered = torch.utils.data.DataLoader(dataset=self.valid_dataset,
+                                                                batch_size=None,
+                                                                shuffle=False,
+                                                                num_workers=config['train']['workers'])
+        self.valid_iter_ordered = iter(self.valid_loader_ordered)
+
         # Testset
         self.test_dataset = DatasetClass(data_dirs=self.test_folders,
                                           nr_submaps=0,
@@ -93,6 +100,9 @@ class SubMapParser():
 
     def getOrderedTrainSet(self):
         return self.train_loader_ordered
+
+    def getOrderedValidSet(self):
+        return self.valid_loader_ordered
 
     def setTrainProbabilities(self, probs):
         self.train_loader.sampler.setSampleProbs(probs)
@@ -325,8 +335,10 @@ class SubMapDataSet(Dataset):
 
     def __getitem__(self, index):
         # return index, index+1
-        print('Dataset Idx: ', index)
-        if index.item() in self.marked_idxs:
+        print('Dataset Idx:', index)
+        if type(index) == torch.Tensor:
+            index = int(index.item())
+        if index in self.marked_idxs:
             index = index-1    # Cannot take the last scene of each seqenece
         out_dict = {'idx': index}
 
