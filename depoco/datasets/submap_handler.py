@@ -43,6 +43,7 @@ class SubMapParser():
         self.train_dataset = DatasetClass(data_dirs=self.train_folders,
                                            nr_submaps=nr_submaps,
                                            nr_points=config['train']['max_nr_pts'], cols=cols, on_the_fly=True,
+                                           pose_prior=config['train']['pose_prior'],
                                            grid_size=np.max(self.grid_size))
         self.train_sampler = SubMapSampler(nr_submaps=len(self.train_dataset),
                                            sampling_method=config['train']['sampling_method'])
@@ -65,6 +66,7 @@ class SubMapParser():
                                            nr_submaps=0,
                                            nr_points=config['train']['max_nr_pts'],
                                            cols=cols, on_the_fly=True,
+                                           pose_prior=config['train']['pose_prior'],
                                            grid_size=np.max(self.grid_size))
         self.valid_sampler = SubMapSampler(nr_submaps=len(self.valid_dataset),
                                            sampling_method=config['train']['validation']['sampling_method'])
@@ -87,6 +89,7 @@ class SubMapParser():
                                           nr_submaps=0,
                                           nr_points=config['train']['max_nr_pts'],
                                           cols=cols, on_the_fly=True,
+                                          pose_prior=config['train']['pose_prior'],
                                           grid_size=np.max(self.grid_size))
         self.test_sampler = SubMapSampler(nr_submaps=len(self.test_dataset),
                                           sampling_method='ordered')
@@ -306,12 +309,14 @@ class SubMapDataSet(Dataset):
                  cols=3,
                  on_the_fly=True,
                  init_ones=True,
+                 pose_prior=False,
                  feature_cols=[],
                  grid_size = 40):
         self.data_dirs = data_dirs
         
         # Setting up poses
         self.poses = []
+        self.pose_prior = pose_prior
         self.marked_idxs = []
         for dir in self.data_dirs:
             poses_path = dir + 'poses.txt'
@@ -343,6 +348,10 @@ class SubMapDataSet(Dataset):
         out_dict = {'idx': index}
 
         k = 1
+        if self.pose_prior:
+            num_feat = 3
+        else:
+            num_feat = 1
         # When skip frames allowed
         # k = random.choice([1,2])
 
@@ -367,7 +376,7 @@ class SubMapDataSet(Dataset):
             out_dict['map_attributes'] = map_[:, 3:]
             if self.init_ones:
                 out_dict['features'] = np.hstack(
-                    (np.ones((points.shape[0], 1), dtype='float32'), out_dict['points_attributes'][:, self.fc]))
+                    (np.ones((points.shape[0], num_feat), dtype='float32'), out_dict['points_attributes'][:, self.fc]))
             else:
                 out_dict['features'] = out_dict['points_attributes'][:, self.fc]
             
@@ -381,7 +390,7 @@ class SubMapDataSet(Dataset):
             out_dict['map_attributes2'] = map_2[:, 3:]
             if self.init_ones:
                 out_dict['features2'] = np.hstack(
-                    (np.ones((points2.shape[0], 1), dtype='float32'), out_dict['points_attributes2'][:, self.fc]))
+                    (np.ones((points2.shape[0], num_feat), dtype='float32'), out_dict['points_attributes2'][:, self.fc]))
             else:
                 out_dict['features2'] = out_dict['points_attributes2'][:, self.fc]
         # out_dict['features_original'] = out_dict['features']
