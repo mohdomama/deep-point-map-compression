@@ -13,6 +13,8 @@ import torch
 import os
 from util.kitti_helper import load_kitti_eval_poses
 from util.transforms import transform_numpy_pcd
+from util.o3d_util import create_o3d_pcd
+from util.time_util import timer_func
 ########################################
 # Torch Data loader
 ########################################
@@ -44,7 +46,8 @@ class SubMapParser():
                                            nr_submaps=nr_submaps,
                                            nr_points=config['train']['max_nr_pts'], cols=cols, on_the_fly=True,
                                            pose_prior=config['train']['pose_prior'],
-                                           grid_size=np.max(self.grid_size))
+                                           grid_size=np.max(self.grid_size),
+                                           voxelize=config['train']['voxelize'])
         self.train_sampler = SubMapSampler(nr_submaps=len(self.train_dataset),
                                            sampling_method=config['train']['sampling_method'])
         self.train_loader = torch.utils.data.DataLoader(dataset=self.train_dataset,
@@ -67,7 +70,8 @@ class SubMapParser():
                                            nr_points=config['train']['max_nr_pts'],
                                            cols=cols, on_the_fly=True,
                                            pose_prior=config['train']['pose_prior'],
-                                           grid_size=np.max(self.grid_size))
+                                           grid_size=np.max(self.grid_size),
+                                           voxelize=config['train']['voxelize'])
         self.valid_sampler = SubMapSampler(nr_submaps=len(self.valid_dataset),
                                            sampling_method=config['train']['validation']['sampling_method'])
         self.valid_loader = torch.utils.data.DataLoader(dataset=self.valid_dataset,
@@ -90,7 +94,8 @@ class SubMapParser():
                                           nr_points=config['train']['max_nr_pts'],
                                           cols=cols, on_the_fly=True,
                                           pose_prior=config['train']['pose_prior'],
-                                          grid_size=np.max(self.grid_size))
+                                          grid_size=np.max(self.grid_size),
+                                          voxelize=config['train']['voxelize'])
         self.test_sampler = SubMapSampler(nr_submaps=len(self.test_dataset),
                                           sampling_method='ordered')
         self.test_loader = torch.utils.data.DataLoader(dataset=self.test_dataset,
@@ -311,7 +316,8 @@ class SubMapDataSet(Dataset):
                  init_ones=True,
                  pose_prior=False,
                  feature_cols=[],
-                 grid_size = 40):
+                 grid_size = 40,
+                 voxelize=False):
         self.data_dirs = data_dirs
         
         # Setting up poses
@@ -336,11 +342,12 @@ class SubMapDataSet(Dataset):
         self.init_ones = init_ones
         self.fc = feature_cols
         self.submaps = createSubmaps(
-            data_dirs, nr_submaps=self.nr_submaps, cols=cols, on_the_fly=on_the_fly,grid_size=grid_size)  # list of submaps
+            data_dirs, nr_submaps=self.nr_submaps, cols=cols, on_the_fly=on_the_fly,grid_size=grid_size, voxelize=voxelize)  # list of submaps
+
 
     def __getitem__(self, index):
         # return index, index+1
-        print('Dataset Idx:', index)
+        # print('Dataset Idx:', index)
         if type(index) == torch.Tensor:
             index = int(index.item())
         if index in self.marked_idxs:
@@ -407,7 +414,7 @@ class SubMapDataSet(Dataset):
 
 
 class SubMap():
-    def __init__(self, file, grid_size=None, on_the_fly=False, file_cols=3):
+    def __init__(self, file, grid_size=None, on_the_fly=False, file_cols=3, voxelize=False):
         self.file = file
         # self.embedding = torch.zeros((embedding_dim))
         self.seq = file.split('/')[-2]
@@ -417,6 +424,7 @@ class SubMap():
             self.file, cols=file_cols) if not on_the_fly else None
         self.normalizer = None
         self.grid_size = grid_size
+        self.voxelize = voxelize
 
         self.initialized = False
         if not on_the_fly:
@@ -444,10 +452,17 @@ class SubMap():
         # points = pcu.loadCloudFromBinary(self.file)
         return self.getPoints()[idx, :]
 
+    def voxelize_sample(self, points):
+        pcd = create_o3d_pcd(points)
+        points = np.asarray(pcd.voxel_down_sample(0.75).points, dtype=np.float32)
+        return points
+
     def getPoints(self, normalize=True):
         # points = pcu.loadCloudFromBinary(self.file)
         if self.points is None:
             points = pcu.loadCloudFromBinary(self.file, cols=self.cols)
+            if self.voxelize:
+                points = self.voxelize_sample(points)
             if normalize:
                 points = np.hstack(
                     (self.normalizer.normalize(points[:, :3]), points[:, 3:]))
@@ -461,14 +476,16 @@ class SubMap():
         subm_idx = np.arange(act_nr_pts)
         # TODO: remove seed fix code
         seed = 3
-        # np.random.seed(seed)
-        # np.random.shuffle(subm_idx)
-        # print('shuffled idx',subm_idx)
-        subm_idx = subm_idx[0:min(act_nr_pts, nr_points)]
+        np.random.seed(seed)
+        np.random.shuffle(subm_idx)
+        if self.voxelize:
+            subm_idx = subm_idx[0:min(act_nr_pts, 6000)]
+        else:
+            subm_idx = subm_idx[0:min(act_nr_pts, nr_points)]
         return points[subm_idx, :]
 
 
-def createSubmaps(folders, nr_submaps=0, cols=3, on_the_fly=False,grid_size=40):
+def createSubmaps(folders, nr_submaps=0, cols=3, on_the_fly=False,grid_size=40, voxelize=False):
     submap_files = []
     for folder in sorted(folders):
         submap_files += sorted(glob.glob(folder+'velodyne/*bin'))
@@ -477,7 +494,7 @@ def createSubmaps(folders, nr_submaps=0, cols=3, on_the_fly=False,grid_size=40):
         n = min((len(submap_files), nr_submaps))
         submap_files = submap_files[:n]
     submaps = [SubMap(f, file_cols=cols,
-                      on_the_fly=on_the_fly,grid_size=grid_size) for f in submap_files]
+                      on_the_fly=on_the_fly,grid_size=grid_size, voxelize=voxelize) for f in submap_files]
     # print(submaps[0].seq, submaps[0].id,len(submaps[0]))
     return submaps
 
